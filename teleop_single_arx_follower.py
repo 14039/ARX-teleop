@@ -593,7 +593,7 @@ class TelemetryListener(SubscribeCallback):
 class SingleFollowerTeleop:
     """Main teleoperation class for single ARX follower."""
     
-    def __init__(self, can_port: str = "can0", robot_type: int = 1, calibration_file: str = "arx_leader_calibration.json"):
+    def __init__(self, can_port: str = "canarm", robot_type: int = 1, calibration_file: str = "arx_leader_calibration.json"):
         self.can_port = can_port
         self.robot_type = robot_type
         self.calibration_file = calibration_file
@@ -648,7 +648,7 @@ class SingleFollowerTeleop:
     def connect_dt_controller(self):
         """Connect to the DT controller."""
         try:
-            self.dt_controller = DTController(self.can_port)  # Use same CAN interface as arm
+            self.dt_controller = DTController("candt")  # Use dedicated DT CAN interface
             self.dt_controller.connect()
             logger.info(f"{Fore.GREEN}✓ Connected to DT controller{Style.RESET_ALL}")
         except Exception as e:
@@ -888,8 +888,8 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     
     parser = argparse.ArgumentParser(description="Single-arm ARX follower-side teleoperation via PubNub")
-    parser.add_argument("--can_port", type=str, default="can0",
-                       help="CAN interface port")
+    parser.add_argument("--can_port", type=str, default="canarm",
+                       help="CAN interface port for arm control")
     parser.add_argument("--robot_type", type=int, default=1,
                        help="Robot type (0 for X5lite, 1 for R5)")
     parser.add_argument("--calibration_file", type=str, default="arx_leader_calibration.json",

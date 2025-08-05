@@ -46,7 +46,7 @@ Z_PROFILE_ACCELERATION_RPM_S = 200  # Acceleration for Z-axis
 Z_POSITION_INCREMENT = 8192  # Position increment per key press (0.5 revolution)
 
 class TankDrive:
-    def __init__(self, can_interface='can0', bitrate=1000000):
+    def __init__(self, can_interface='candt', bitrate=1000000):
         """Initialize tank drive controller"""
         # Initialize pygame
         pygame.init()
@@ -314,7 +314,7 @@ class TankDrive:
             
 if __name__ == "__main__":
     # Check if CAN interface is specified
-    can_interface = 'can0'
+    can_interface = 'candt'
     if len(sys.argv) > 1:
         can_interface = sys.argv[1]
         

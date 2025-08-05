@@ -1,7 +1,7 @@
 BACKGROUND:
 This repository is a "teleoperation control" repo for robotics. It's designed for an operator, controlling robotic "leader" hardware, and a robot, the "follower" hardware, being remotely controlled. There are robotic arms with servos on the leader side that are controlling ARX R5 follower arms, and other hardware, like a wheeled base and actuated z-axis, controlled with WASD-style controls on the follower side. 
 
-CAN is frequently used for the ARX arm and the drive + z-axis motors. 
+CAN is frequently used for the ARX arm and the drive + z-axis motors. Hardware-specific CAN device names are used: "canarm" for arm-related devices and "candt" for drivetrain-related devices.
 
 There is also camera streaming support, transmitting visual data from the follower / remote-robot side back to the operator / leader side.
 
@@ -11,7 +11,14 @@ The repo contains a few test/basic functionality scriupts that verify the functi
 
 The repo is made to run on multiple OS's, the leader side typically needs linux compatibility, since there are robotic components operating on the "edge hardware" - and the follower side is being developed on MAC.
 
-For the leadaer/follower setup, the arx_leader_calibration.json file is used to sync the relative positions between the servo-built leader arm and the ARX R5 follower arm. 
+For the leadaer/follower setup, the arx_leader_calibration.json file is used to sync the relative positions between the servo-built leader arm and the ARX R5 follower arm.
+
+COMPLETED FEATURES:
+- Drivetrain ("dt") controls have been successfully integrated into the pubnub streaming system. The system now transmits both arm positions and drivetrain controls (left_speed, right_speed, z_position) in the same telemetry message.
+- Leader side: WASD keyboard controls integrated into teleop_single_arx_leader.py for tank drive movement, Q/E for Z-axis control
+- Follower side: DTController class in teleop_single_arx_follower.py receives and applies DT controls to RS03 motors via CANopen
+- Tank drive functionality from test_dt_via_keyboard.py has been successfully integrated into both leader and follower teleop scripts
+- The pubnub message structure includes both "positions" (for arm control) and "dt_controls" (for drivetrain control) in the same telemetry stream 
 
 
 
@@ -19,6 +26,49 @@ NOTE FOR AI: Changes are meant to be implemented with MINIMAL code overhead - ta
 END NOTE FOR AI
 
 YOUR TASK:
+Migrate the ARX control system to be self-contained on Linux, eliminating the external R5 SDK dependency.
+
+CONTEXT:
+Currently, the arx_control module depends on compiled ARX libraries that must be copied from an external R5 SDK installation. The setup_libraries.sh script tries to copy from "/home/vassar/code/R5/py/ARX_R5_python/bimanual/lib/". This creates a cross-dependency that prevents standalone deployment on Linux systems.
+
+GOAL:
+Make the ARX-teleop repository fully self-contained by including the necessary ARX binary libraries within the arx_control/lib/ directory structure.
+
+REQUIRED ACTIONS:
+1. Locate and copy the ARX R5 libraries from the external SDK to arx_control/lib/ following the expected structure:
+   ```
+   arx_control/lib/
+   ├── arx_r5_python/
+   │   ├── arx_r5_python.cpython-*.so
+   │   └── kinematic_solver.cpython-*.so
+   ├── arx_r5_src/
+   │   ├── libarx_r5_src.so
+   │   └── include/ (headers if needed)
+   └── libkinematic_solver.so
+   ```
+
+2. Test that the arx_control module can import successfully: `python3 -c "import arx_r5_python"`
+
+3. Update setup_libraries.sh to prioritize checking for self-contained libraries before attempting external SDK copy
+
+4. Verify that teleop_single_arx_follower.py works with the self-contained libraries
+
+CONSTRAINTS:
+- Keep libraries platform-specific (Linux x86_64 only for now)
+- Maintain existing .gitignore rules for lib/ directory if needed for size concerns
+- Ensure LD_LIBRARY_PATH and PYTHONPATH are correctly configured via setup_env.sh
+- Test on a clean Linux system without the external R5 SDK to verify independence
+
+
+
+
+
+IGNORE ALL TEXT BELOW THIS: DO NOT DO THE FOLLOWING; IT IS FOR FUTURE REFERENCE =======
+====
+
+===START IGNORE===
+
+====
 Currently the pubnub stream is set up to transmit leader positions to the follower arm over the channel. Now the goal is to incorporate "force feedback" - information from the follower arm that will be sent back to the leader to provide resistive forces to the operator.
 
 The way to approximate resistive forces is to compare the ARX R5 SET_POSITION (dictated by the leader controls) with the GET_POSITION - a high delta will indicate a force preventing the arm, which needs to be also sent to the leader arm.
@@ -28,5 +78,9 @@ Modify the teleop scripts to send information in the other direction too (do you
 To test your code, we will not first implement the force control on the leader servos themselves; instead add a compact terminal output to the leader side that shows the resistive force for each motors 1-7. Then I can determine live if applying a force to the follower arm results in incrementing/decreementing the force control values that you pipe back for the follower / operator side.
 
 
+====
 
+===END IGNORE===
+
+====
 
