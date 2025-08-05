@@ -206,10 +206,23 @@ class SingleLeaderTeleop:
         """Initialize pygame for keyboard input."""
         try:
             pygame.init()
-            # Create a small hidden window for keyboard input
-            self.pygame_screen = pygame.display.set_mode((200, 100))
-            pygame.display.set_caption("ARX Leader DT Control")
-            logger.info("✓ Pygame initialized for DT keyboard input (WASD + QE)")
+            # Create a simple window for keyboard input
+            self.pygame_screen = pygame.display.set_mode((300, 200))
+            pygame.display.set_caption("DT Controls - Keep Focused!")
+            
+            # Simple display
+            self.pygame_screen.fill((40, 40, 40))
+            font = pygame.font.Font(None, 36)
+            text = font.render("DT Controls Active", True, (255, 255, 255))
+            self.pygame_screen.blit(text, (20, 50))
+            
+            font_small = pygame.font.Font(None, 24)
+            text2 = font_small.render("WASD + QE", True, (200, 200, 200))
+            self.pygame_screen.blit(text2, (100, 100))
+            
+            pygame.display.flip()
+            
+            logger.info("✓ Pygame window created - keep it focused for DT controls!")
         except Exception as e:
             logger.error(f"Failed to initialize pygame: {e}")
             raise
@@ -218,13 +231,16 @@ class SingleLeaderTeleop:
         """Handle WASD + QE keyboard input for drivetrain control."""
         # Process pygame events
         for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
+            if event.type == pygame.QUIT:
+                self.running = False
+                return
+            elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_q:
                     self.dt_z_position += Z_POSITION_INCREMENT
-                    logger.debug(f"Z-axis up: position = {self.dt_z_position}")
+                    logger.info(f"Z-axis up: {self.dt_z_position}")
                 elif event.key == pygame.K_e:
                     self.dt_z_position -= Z_POSITION_INCREMENT
-                    logger.debug(f"Z-axis down: position = {self.dt_z_position}")
+                    logger.info(f"Z-axis down: {self.dt_z_position}")
         
         # Get current key states for continuous movement
         keys = pygame.key.get_pressed()
@@ -244,8 +260,6 @@ class SingleLeaderTeleop:
             turn = MAX_SPEED_RPM * TURN_SPEED_FACTOR
             
         # Calculate individual motor speeds for tank drive
-        # Left motor: forward + turn
-        # Right motor: forward - turn
         self.dt_left_speed = forward + turn
         self.dt_right_speed = forward - turn
         
