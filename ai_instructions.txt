@@ -1,0 +1,32 @@
+BACKGROUND:
+This repository is a "teleoperation control" repo for robotics. It's designed for an operator, controlling robotic "leader" hardware, and a robot, the "follower" hardware, being remotely controlled. There are robotic arms with servos on the leader side that are controlling ARX R5 follower arms, and other hardware, like a wheeled base and actuated z-axis, controlled with WASD-style controls on the follower side. 
+
+CAN is frequently used for the ARX arm and the drive + z-axis motors. 
+
+There is also camera streaming support, transmitting visual data from the follower / remote-robot side back to the operator / leader side.
+
+Agora is used as the streaming service for the video, and pubnub is used for control streaming. Do research on those services if you need to; they're b2b SaaS services. 
+
+The repo contains a few test/basic functionality scriupts that verify the functionality of local hardware, and then it contains scripts that actually send/receive video + controls over the web. .sh files are used to run the .py files and set up dependency/install/reset commands
+
+The repo is made to run on multiple OS's, the leader side typically needs linux compatibility, since there are robotic components operating on the "edge hardware" - and the follower side is being developed on MAC.
+
+For the leadaer/follower setup, the arx_leader_calibration.json file is used to sync the relative positions between the servo-built leader arm and the ARX R5 follower arm. 
+
+
+
+NOTE FOR AI: Changes are meant to be implemented with MINIMAL code overhead - take extra time and tokens to reason about the most direct and simple way to implement the requested change. DO NOT without permission add extra "Edge Case" or "Bloatware Bureacracy" code that pollutes the repo and disguises the code's core functionality. Your purpose to be a methodical, thoughtful, analytical coding assistant that executes concise changes on the codebase to achieve the requested result. You are to "Defend" the codebase against "Total BS Useless Code" that hardly ever gets run, and even reason about how to improve implementation instead of moving forward with a "Crap Hackjob that Fucks Up the Codebase" - the entire team appreciates your attention to detail and thoughtfulness.
+END NOTE FOR AI
+
+YOUR TASK:
+Currently the pubnub stream is set up to transmit leader positions to the follower arm over the channel. Now the goal is to incorporate "force feedback" - information from the follower arm that will be sent back to the leader to provide resistive forces to the operator.
+
+The way to approximate resistive forces is to compare the ARX R5 SET_POSITION (dictated by the leader controls) with the GET_POSITION - a high delta will indicate a force preventing the arm, which needs to be also sent to the leader arm.
+
+Modify the teleop scripts to send information in the other direction too (do you need a new pubnub channel?) - there should be a resistive force value for each of the corresponding motors 1-7. 
+
+To test your code, we will not first implement the force control on the leader servos themselves; instead add a compact terminal output to the leader side that shows the resistive force for each motors 1-7. Then I can determine live if applying a force to the follower arm results in incrementing/decreementing the force control values that you pipe back for the follower / operator side.
+
+
+
+

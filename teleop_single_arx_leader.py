@@ -68,12 +68,23 @@ except ImportError:
     class Style:
         RESET_ALL = BRIGHT = ""
 
+try:
+    import pygame
+except ImportError:
+    print("pygame not installed. Please install with: pip install pygame")
+    sys.exit(1)
+
 # Import our modules
 import pubnub_config
 from servo_controller import SO101Controller
 
 # Global flag for graceful shutdown
 shutdown_requested = False
+
+# DT Control configuration (matching test_dt_via_keyboard.py)
+MAX_SPEED_RPM = 100  # Maximum speed in RPM
+TURN_SPEED_FACTOR = 0.7  # Reduce speed when turning
+Z_POSITION_INCREMENT = 8192  # Position increment per key press (0.5 revolution)
 
 
 def signal_handler(signum, frame):
@@ -183,6 +194,61 @@ class SingleLeaderTeleop:
         self.last_publish_time = 0
         self.publish_times = []
         
+        # DT Control state (tank drive + Z-axis)
+        self.dt_left_speed = 0  # Left motor speed in RPM
+        self.dt_right_speed = 0  # Right motor speed in RPM
+        self.dt_z_position = 0  # Z-axis target position
+        
+        # Initialize pygame for keyboard input
+        self._init_pygame()
+        
+    def _init_pygame(self):
+        """Initialize pygame for keyboard input."""
+        try:
+            pygame.init()
+            # Create a small hidden window for keyboard input
+            self.pygame_screen = pygame.display.set_mode((200, 100))
+            pygame.display.set_caption("ARX Leader DT Control")
+            logger.info("✓ Pygame initialized for DT keyboard input (WASD + QE)")
+        except Exception as e:
+            logger.error(f"Failed to initialize pygame: {e}")
+            raise
+    
+    def _handle_dt_input(self):
+        """Handle WASD + QE keyboard input for drivetrain control."""
+        # Process pygame events
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_q:
+                    self.dt_z_position += Z_POSITION_INCREMENT
+                    logger.debug(f"Z-axis up: position = {self.dt_z_position}")
+                elif event.key == pygame.K_e:
+                    self.dt_z_position -= Z_POSITION_INCREMENT
+                    logger.debug(f"Z-axis down: position = {self.dt_z_position}")
+        
+        # Get current key states for continuous movement
+        keys = pygame.key.get_pressed()
+        
+        # Calculate base speeds for tank drive
+        forward = 0
+        turn = 0
+        
+        if keys[pygame.K_w]:
+            forward = MAX_SPEED_RPM
+        elif keys[pygame.K_s]:
+            forward = -MAX_SPEED_RPM
+            
+        if keys[pygame.K_a]:
+            turn = -MAX_SPEED_RPM * TURN_SPEED_FACTOR
+        elif keys[pygame.K_d]:
+            turn = MAX_SPEED_RPM * TURN_SPEED_FACTOR
+            
+        # Calculate individual motor speeds for tank drive
+        # Left motor: forward + turn
+        # Right motor: forward - turn
+        self.dt_left_speed = forward + turn
+        self.dt_right_speed = forward - turn
+        
     def setup_pubnub(self):
         """Initialize PubNub connection."""
         logger.info("Setting up PubNub connection...")
@@ -225,11 +291,19 @@ class SingleLeaderTeleop:
         # Convert motor IDs to strings for JSON serialization
         position_data = {str(motor_id): int(pos) for motor_id, pos in positions.items()}
         
+        # Add DT control data
+        dt_controls = {
+            "left_speed": self.dt_left_speed,
+            "right_speed": self.dt_right_speed,
+            "z_position": self.dt_z_position
+        }
+        
         message = {
             "type": "telemetry",
             "timestamp": time.time(),
             "sequence": self.sequence,
-            "positions": position_data  # Single arm positions
+            "positions": position_data,  # Single arm positions
+            "dt_controls": dt_controls   # Drivetrain controls
         }
         
         try:
@@ -274,9 +348,12 @@ class SingleLeaderTeleop:
                               if time.time() - status.get("timestamp", 0) < 5)
         follower_info = f"Followers: {active_followers}"
         
-        # Single compact line
-        status_line = f"LEADER {leader_status} | {net_info} | {rate_info} | {follower_info} | Sent: {stats['sent']}"
-        print(f"\r{status_line:<80}", end="", flush=True)
+        # DT control info
+        dt_info = f"DT: L{self.dt_left_speed:.0f} R{self.dt_right_speed:.0f} Z{self.dt_z_position}"
+        
+        # Single compact line with DT info
+        status_line = f"LEADER {leader_status} | {net_info} | {rate_info} | {follower_info} | {dt_info} | Sent: {stats['sent']}"
+        print(f"\r{status_line:<120}", end="", flush=True)
         
     def teleoperation_loop(self):
         """Main loop reading positions and publishing."""
@@ -288,11 +365,15 @@ class SingleLeaderTeleop:
         display_thread.start()
         
         logger.info(f"Starting single arm teleoperation at {pubnub_config.TARGET_FPS} Hz...")
+        logger.info("DT Controls: WASD for tank drive, Q/E for Z-axis")
         logger.info("Status updates every 2 seconds on single line. Press Ctrl+C to stop.")
         
         try:
             while self.running and not shutdown_requested:
                 loop_start = time.time()
+                
+                # Handle DT keyboard input
+                self._handle_dt_input()
                 
                 # Read positions from the leader
                 if self.leader and self.leader.connected:
@@ -343,6 +424,12 @@ class SingleLeaderTeleop:
                 self.leader.disconnect()
             except Exception as e:
                 logger.warning(f"Failed to disconnect leader: {e}")
+        
+        # Cleanup pygame
+        try:
+            pygame.quit()
+        except:
+            pass
                 
         logger.info("Shutdown complete")
 

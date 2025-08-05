@@ -67,8 +67,41 @@ except ImportError:
 import pubnub_config
 from arx_control import ARXArm  # Use ARX arm instead of SO101Controller
 
+try:
+    import canopen
+except ImportError:
+    print("canopen not installed. Please install with: pip install canopen")
+    sys.exit(1)
+
 # Global flag for graceful shutdown
 shutdown_requested = False
+
+# DT Control configuration (matching test_dt_via_keyboard.py)
+LEFT_MOTOR_ID = 126
+RIGHT_MOTOR_ID = 127
+Z_MOTOR_ID = 1  # Z-axis motor ID
+
+# CANopen object dictionary indices
+CONTROLWORD = 0x6040
+STATUSWORD = 0x6041
+MODES_OF_OPERATION = 0x6060
+TARGET_VELOCITY = 0x60FF
+TARGET_POSITION = 0x607A
+PROFILE_VELOCITY = 0x6081
+PROFILE_ACCELERATION = 0x6083
+TARGET_TORQUE = 0x6071
+POSITION_ACTUAL = 0x6064
+
+# Control modes
+VELOCITY_MODE = 3
+POSITION_MODE_PP = 1  # Profile Position mode
+
+# Motor states
+OPERATION_ENABLE = 0x27
+
+# Z-axis configuration
+Z_PROFILE_VELOCITY_RPM = 50  # Speed for Z-axis movements
+Z_PROFILE_ACCELERATION_RPM_S = 200  # Acceleration for Z-axis
 
 
 def signal_handler(signum, frame):
@@ -76,6 +109,156 @@ def signal_handler(signum, frame):
     global shutdown_requested
     logger.info("\n\n⚠️  Shutdown requested. Cleaning up...")
     shutdown_requested = True
+
+
+class DTController:
+    """Controller for drivetrain motors via CANopen."""
+    
+    def __init__(self, can_interface='can0', bitrate=1000000):
+        """Initialize DT controller."""
+        self.can_interface = can_interface
+        self.bitrate = bitrate
+        self.network = None
+        self.left_motor = None
+        self.right_motor = None
+        self.z_motor = None
+        self.connected = False
+        self.current_z_position = 0
+        
+    def connect(self):
+        """Connect to CAN network and initialize motors."""
+        try:
+            # Initialize CANopen network
+            self.network = canopen.Network()
+            self.network.connect(interface='socketcan', channel=self.can_interface, bitrate=self.bitrate)
+            logger.info(f"✓ Connected to CAN interface: {self.can_interface}")
+            
+            # Add motor nodes - look for .eds file in chassis_control directory
+            eds_path = os.path.join(os.path.dirname(__file__), 'chassis_control', 'rs03.eds')
+            if not os.path.exists(eds_path):
+                logger.warning(f"EDS file not found at {eds_path}, using default path")
+                eds_path = 'chassis_control/rs03.eds'
+                
+            self.left_motor = self.network.add_node(LEFT_MOTOR_ID, eds_path)
+            self.right_motor = self.network.add_node(RIGHT_MOTOR_ID, eds_path)
+            self.z_motor = self.network.add_node(Z_MOTOR_ID, eds_path)
+            
+            # Initialize motors
+            self._init_tank_motors()
+            self._init_z_motor()
+            
+            self.connected = True
+            logger.info("✓ DT motors initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize DT controller: {e}")
+            raise
+            
+    def _init_tank_motors(self):
+        """Initialize tank drive motors in velocity mode."""
+        tank_motors = [
+            (self.left_motor, "Left"),
+            (self.right_motor, "Right")
+        ]
+        
+        for motor, name in tank_motors:
+            try:
+                # First disable motor
+                motor.sdo[CONTROLWORD].raw = 0
+                time.sleep(0.1)
+                
+                # Set velocity mode
+                motor.sdo[MODES_OF_OPERATION].raw = VELOCITY_MODE
+                
+                # Set max torque (1000 = 100% = 20 N·m for RS03)
+                motor.sdo[TARGET_TORQUE].raw = 1000
+                
+                # Enable motor operation
+                motor.sdo[CONTROLWORD].raw = 15
+                
+                logger.debug(f"{name} tank motor initialized")
+                
+            except Exception as e:
+                logger.error(f"Error initializing {name} tank motor: {e}")
+                
+    def _init_z_motor(self):
+        """Initialize Z motor in position mode."""
+        try:
+            # First disable motor
+            self.z_motor.sdo[CONTROLWORD].raw = 0
+            time.sleep(0.1)
+            
+            # Set position mode (Profile Position)
+            self.z_motor.sdo[MODES_OF_OPERATION].raw = POSITION_MODE_PP
+            
+            # Set motion parameters
+            self.z_motor.sdo[TARGET_TORQUE].raw = 1000  # Max torque
+            self.z_motor.sdo[PROFILE_VELOCITY].raw = int(Z_PROFILE_VELOCITY_RPM * 10)  # Convert to 0.1 RPM units
+            self.z_motor.sdo[PROFILE_ACCELERATION].raw = int(Z_PROFILE_ACCELERATION_RPM_S * 10)  # Convert to 0.1 RPM/s units
+            
+            # Enable motor operation
+            self.z_motor.sdo[CONTROLWORD].raw = 15
+            
+            # Get current position
+            self.current_z_position = self.z_motor.sdo[POSITION_ACTUAL].raw
+            logger.debug(f"Z motor initialized at position: {self.current_z_position}")
+            
+        except Exception as e:
+            logger.error(f"Error initializing Z motor: {e}")
+            
+    def apply_dt_controls(self, dt_controls: Dict):
+        """Apply DT control commands."""
+        if not self.connected:
+            return
+            
+        try:
+            # Apply tank drive speeds (convert RPM to 0.1 RPM units)
+            left_speed = int(dt_controls.get("left_speed", 0) * 10)
+            right_speed = int(dt_controls.get("right_speed", 0) * 10)
+            
+            self.left_motor.sdo[TARGET_VELOCITY].raw = left_speed
+            self.right_motor.sdo[TARGET_VELOCITY].raw = right_speed
+            
+            # Apply Z-axis position
+            z_position = dt_controls.get("z_position", self.current_z_position)
+            if z_position != self.current_z_position:
+                self.z_motor.sdo[TARGET_POSITION].raw = z_position
+                self.current_z_position = z_position
+                
+            logger.debug(f"DT applied: L={left_speed/10:.1f} R={right_speed/10:.1f} Z={z_position}")
+            
+        except Exception as e:
+            logger.error(f"Error applying DT controls: {e}")
+            
+    def stop_motors(self):
+        """Stop all DT motors."""
+        if not self.connected:
+            return
+            
+        try:
+            # Set velocity to 0 for tank drive motors
+            self.left_motor.sdo[TARGET_VELOCITY].raw = 0
+            self.right_motor.sdo[TARGET_VELOCITY].raw = 0
+            
+            # Disable all motors
+            self.left_motor.sdo[CONTROLWORD].raw = 0
+            self.right_motor.sdo[CONTROLWORD].raw = 0
+            self.z_motor.sdo[CONTROLWORD].raw = 0
+            
+        except Exception as e:
+            logger.error(f"Error stopping DT motors: {e}")
+            
+    def disconnect(self):
+        """Disconnect from CAN network."""
+        if self.connected:
+            try:
+                self.stop_motors()
+                if self.network:
+                    self.network.disconnect()
+                logger.info("✓ DT controller disconnected")
+            except Exception as e:
+                logger.warning(f"Error during DT disconnect: {e}")
+        self.connected = False
 
 
 class ARXPositionSmoother:
@@ -424,6 +607,9 @@ class SingleFollowerTeleop:
         # Position smoothing
         self.smoother = ARXPositionSmoother(pubnub_config.POSITION_SMOOTHING)
         
+        # DT Controller
+        self.dt_controller: Optional[DTController] = None
+        
         # Update tracking
         self.last_update_time = 0
         self.update_times = []
@@ -459,6 +645,17 @@ class SingleFollowerTeleop:
         
         logger.info(f"{Fore.GREEN}✓ Connected to ARX follower robot{Style.RESET_ALL}")
         
+    def connect_dt_controller(self):
+        """Connect to the DT controller."""
+        try:
+            self.dt_controller = DTController(self.can_port)  # Use same CAN interface as arm
+            self.dt_controller.connect()
+            logger.info(f"{Fore.GREEN}✓ Connected to DT controller{Style.RESET_ALL}")
+        except Exception as e:
+            logger.warning(f"Failed to connect DT controller: {e}")
+            logger.warning("DT functionality will be disabled")
+            self.dt_controller = None
+        
     def send_acknowledgment(self, sequence: int, timestamp: float):
         """Send acknowledgment back to leader."""
         try:
@@ -491,9 +688,12 @@ class SingleFollowerTeleop:
         timestamp = telemetry_data.get("timestamp", 0)
         sequence = telemetry_data.get("sequence", 0)
         positions_data = telemetry_data.get("positions", {})
+        dt_controls = telemetry_data.get("dt_controls", {})
         
         # Debug logging
         logger.debug(f"Received positions: {positions_data}")
+        if dt_controls:
+            logger.debug(f"Received DT controls: {dt_controls}")
         
         # Calculate latency
         latency = (time.time() - timestamp) * 1000  # ms
@@ -510,25 +710,31 @@ class SingleFollowerTeleop:
         if sequence % 5 == 0:
             self.send_acknowledgment(sequence, timestamp)
         
-        # SIMPLIFIED: Direct position application for single arm
-        if not self.follower or not self.follower.connected:
-            logger.warning("No connected follower to apply positions to")
-            return
-            
-        try:
-            # Convert string motor IDs back to integers and create position dict
-            motor_positions = {}
-            for motor_id_str, position in positions_data.items():
-                motor_id = int(motor_id_str)
-                motor_positions[motor_id] = position
+        # Apply arm positions
+        if self.follower and self.follower.connected:
+            try:
+                # Convert string motor IDs back to integers and create position dict
+                motor_positions = {}
+                for motor_id_str, position in positions_data.items():
+                    motor_id = int(motor_id_str)
+                    motor_positions[motor_id] = position
+                    
+                logger.debug(f"Writing positions to ARX arm: {motor_positions}")
                 
-            logger.debug(f"Writing positions to ARX arm: {motor_positions}")
-            
-            # Apply positions to ARX arm with smoothing
-            self.follower.write_joint_tics_smoothed(motor_positions, self.smoother)
-            
-        except Exception as e:
-            logger.error(f"Error applying positions: {e}")
+                # Apply positions to ARX arm with smoothing
+                self.follower.write_joint_tics_smoothed(motor_positions, self.smoother)
+                
+            except Exception as e:
+                logger.error(f"Error applying arm positions: {e}")
+        else:
+            logger.warning("No connected follower to apply positions to")
+        
+        # Apply DT controls
+        if dt_controls and self.dt_controller and self.dt_controller.connected:
+            try:
+                self.dt_controller.apply_dt_controls(dt_controls)
+            except Exception as e:
+                logger.error(f"Error applying DT controls: {e}")
             
     def display_status(self):
         """Display current status and statistics."""
@@ -542,6 +748,14 @@ class SingleFollowerTeleop:
         if self.follower:
             print(f"  ARX R5 - {'Connected' if self.follower.connected else 'Disconnected'}")
             print(f"  Motors: 6 arm joints + 1 gripper")  # ARX R5 architecture
+        
+        # Connected DT controller
+        print(f"{Style.BRIGHT}DT Controller:{Style.RESET_ALL}")
+        if self.dt_controller:
+            print(f"  RS03 Tank Drive - {'Connected' if self.dt_controller.connected else 'Disconnected'}")
+            print(f"  Motors: 2 tank drive + 1 Z-axis")
+        else:
+            print("  Not initialized")
         print()
         
         # Network stats
@@ -657,6 +871,14 @@ class SingleFollowerTeleop:
                 self.follower.disconnect()
             except Exception as e:
                 logger.warning(f"Failed to disconnect follower: {e}")
+        
+        # Disconnect DT controller
+        logger.info("Disconnecting DT controller...")
+        if self.dt_controller:
+            try:
+                self.dt_controller.disconnect()
+            except Exception as e:
+                logger.warning(f"Failed to disconnect DT controller: {e}")
                 
         logger.info("Shutdown complete")
 
@@ -689,6 +911,7 @@ def main():
         # Setup
         teleop.setup_pubnub()
         teleop.connect_follower()
+        teleop.connect_dt_controller()  # Connect DT controller
         
         # Run main loop
         teleop.teleoperation_loop()
