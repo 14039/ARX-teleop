@@ -26,7 +26,7 @@ Current Agora credentials are based on nate@vassarrobotics.com agora account:
 ls /dev/ttyACM*
 
 # Set up CAN interface (replace /dev/ttyACM0 with your device)
-sudo slcand -o -f -s8 /dev/ttyACM2 can0
+sudo slcand -o -f -s8 /dev/ttyACM1 can0
 sudo ip link set can0 up
 ```
 

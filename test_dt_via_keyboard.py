@@ -391,7 +391,7 @@ def main():
     """Main function - scans for motors then starts keyboard control"""
     
     # Check if CAN interface is specified
-    can_interface = 'can0'
+    can_interface = 'can1'
     if len(sys.argv) > 1:
         can_interface = sys.argv[1]
     

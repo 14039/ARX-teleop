@@ -502,9 +502,9 @@ class SingleFollowerTeleop:
             self.latencies.pop(0)
             
         # Safety check: reject if latency too high
-        if latency > pubnub_config.MAX_LATENCY_MS:
-            logger.warning(f"{Fore.RED}Rejecting data: latency {latency:.1f}ms > {pubnub_config.MAX_LATENCY_MS}ms{Style.RESET_ALL}")
-            return
+        # if latency > pubnub_config.MAX_LATENCY_MS:
+        #     logger.warning(f"{Fore.RED}Rejecting data: latency {latency:.1f}ms > {pubnub_config.MAX_LATENCY_MS}ms{Style.RESET_ALL}")
+        #     return
             
         # Send acknowledgment (only every 5th message to reduce traffic)
         if sequence % 5 == 0:

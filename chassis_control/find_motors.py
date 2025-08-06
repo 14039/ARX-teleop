@@ -4,7 +4,7 @@ import os
 import time
 
 # CAN bus configuration (may be overridden via environment variables)
-CAN_CHANNEL: str = os.getenv("CAN_CHANNEL", "can0")
+CAN_CHANNEL: str = os.getenv("CAN_CHANNEL", "can1")
 CAN_BITRATE: int = int(os.getenv("CAN_BITRATE", "1000000"))  # 1 Mbps
 
 
