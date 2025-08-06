@@ -32,7 +32,7 @@ CONTEXT:
 Currently, the arx_control module depends on compiled ARX libraries that must be copied from an external R5 SDK installation. The setup_libraries.sh script tries to copy from "/home/vassar/code/R5/py/ARX_R5_python/bimanual/lib/". This creates a cross-dependency that prevents standalone deployment on Linux systems.
 
 GOAL:
-Make the ARX-teleop repository fully self-contained by including the necessary ARX binary libraries within the arx_control/lib/ directory structure.
+Connect the binary / dependency for the R5 arm to the public repository instead of a different repo on the local machine. The goal is to be able to set up just this repoisotry on a fresh linux computer and have it work - so we need to handle all dependencies from WITHIN this repo
 
 REQUIRED ACTIONS:
 1. Locate and copy the ARX R5 libraries from the external SDK to arx_control/lib/ following the expected structure:
