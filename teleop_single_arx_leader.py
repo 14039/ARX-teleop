@@ -12,25 +12,27 @@ Usage:
 """
 
 import os
-import logging
+# import logging
+import zmq
+import json
 
 # Disable PubNub logging via environment variable
 os.environ['PUBNUB_LOG_LEVEL'] = 'NONE'
 
 # Configure logging BEFORE importing other modules
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+# logger = logging.getLogger(__name__)
 
 # Suppress verbose HTTP logs from various libraries
-logging.getLogger('urllib3').setLevel(logging.ERROR)
-logging.getLogger('requests').setLevel(logging.ERROR)
-logging.getLogger('httpx').setLevel(logging.ERROR)
-logging.getLogger('httpcore').setLevel(logging.ERROR)
-logging.getLogger('pubnub').setLevel(logging.WARNING)
+# logging.getLogger('urllib3').setLevel(logging.ERROR)
+# logging.getLogger('requests').setLevel(logging.ERROR)
+# logging.getLogger('httpx').setLevel(logging.ERROR)
+# logging.getLogger('httpcore').setLevel(logging.ERROR)
+# logging.getLogger('pubnub').setLevel(logging.WARNING)
 # Disable all INFO logs from modules starting with 'http'
-for name in logging.root.manager.loggerDict:
-    if name.startswith('http'):
-        logging.getLogger(name).setLevel(logging.ERROR)
+# for name in logging.root.manager.loggerDict:
+#     if name.startswith('http'):
+#         logging.getLogger(name).setLevel(logging.ERROR)
 
 import argparse
 import json
@@ -48,15 +50,15 @@ except ImportError:
     # Windows doesn't have select for stdin
     select = None
 
-try:
-    from pubnub.pnconfiguration import PNConfiguration
-    from pubnub.pubnub import PubNub
-    from pubnub.exceptions import PubNubException
-    from pubnub.callbacks import SubscribeCallback
-    from pubnub.enums import PNStatusCategory
-except ImportError:
-    print("PubNub not installed. Please install with: pip install pubnub")
-    sys.exit(1)
+# try:
+#     from pubnub.pnconfiguration import PNConfiguration
+#     from pubnub.pubnub import PubNub
+#     from pubnub.exceptions import PubNubException
+#     from pubnub.callbacks import SubscribeCallback
+#     from pubnub.enums import PNStatusCategory
+# except ImportError:
+#     print("PubNub not installed. Please install with: pip install pubnub")
+#     sys.exit(1)
 
 try:
     from colorama import init, Fore, Style
@@ -69,7 +71,7 @@ except ImportError:
         RESET_ALL = BRIGHT = ""
 
 # Import our modules
-import pubnub_config
+# import pubnub_config
 from servo_controller import SO101Controller
 
 # Global flag for graceful shutdown
@@ -79,7 +81,7 @@ shutdown_requested = False
 def signal_handler(signum, frame):
     """Handle SIGINT (Ctrl+C) for graceful shutdown."""
     global shutdown_requested
-    logger.info("\n\n⚠️  Shutdown requested. Cleaning up...")
+    print("\n\n⚠️  Shutdown requested. Cleaning up...")
     shutdown_requested = True
 
 
@@ -135,30 +137,31 @@ class NetworkMonitor:
         }
 
 
-class StatusListener(SubscribeCallback):
-    """Listen for status updates from follower."""
-    
-    def __init__(self, monitor: NetworkMonitor):
-        self.monitor = monitor
-        self.follower_status = {}
-        
-    def message(self, pubnub, message):
-        """Handle status messages from follower."""
-        data = message.message
-        if isinstance(data, dict) and data.get("type") == "ack":
-            # Acknowledgment from follower
-            sequence = data.get("sequence")
-            timestamp = data.get("timestamp")
-            if sequence is not None and timestamp is not None:
-                latency = self.monitor.message_acknowledged(sequence, timestamp)
-                if latency is not None:
-                    logger.debug(f"Received ack for seq {sequence}, latency: {latency:.1f}ms")
-                if latency and latency > pubnub_config.LATENCY_WARNING_MS:
-                    logger.warning(f"{Fore.YELLOW}High latency: {latency:.1f}ms{Style.RESET_ALL}")
-                
-        elif isinstance(data, dict) and data.get("type") == "status":
-            # Status update from follower
-            self.follower_status[data.get("follower_id")] = data
+# class StatusListener(SubscribeCallback):
+#     """Listen for status updates from follower."""
+#     
+#     def __init__(self, monitor: NetworkMonitor):
+#         self.monitor = monitor
+#         self.follower_status = {}
+#         
+#     def message(self, pubnub, message):
+#         """Handle status messages from follower."""
+#         data = message.message
+#         if isinstance(data, dict) and data.get("type") == "ack":
+#             # Acknowledgment from follower
+#             sequence = data.get("sequence")
+#             timestamp = data.get("timestamp")
+#             if sequence is not None and timestamp is not None:
+#                 latency = self.monitor.message_acknowledged(sequence, timestamp)
+#                 if latency is not None:
+#                     # print(f"Received ack for seq {sequence}, latency: {latency:.1f}ms")
+#                     pass
+#                 # if latency and latency > pubnub_config.LATENCY_WARNING_MS:
+#                 #     print(f"{Fore.YELLOW}High latency: {latency:.1f}ms{Style.RESET_ALL}")
+#                 
+#         elif isinstance(data, dict) and data.get("type") == "status":
+#             # Status update from follower
+#             self.follower_status[data.get("follower_id")] = data
 
 
 class SingleLeaderTeleop:
@@ -175,9 +178,10 @@ class SingleLeaderTeleop:
         self.sequence = 0
         
         # Network components
-        self.pubnub: Optional[PubNub] = None
+        # self.pubnub: Optional[PubNub] = None
+        self.zmq_socket = None
         self.monitor = NetworkMonitor()
-        self.status_listener = StatusListener(self.monitor)
+        # self.status_listener = StatusListener(self.monitor)
         
         # Performance tracking
         self.last_publish_time = 0
@@ -185,7 +189,7 @@ class SingleLeaderTeleop:
         
     def setup_pubnub(self):
         """Initialize PubNub connection."""
-        logger.info("Setting up PubNub connection...")
+        print("Setting up PubNub connection...")
         
         pnconfig = PNConfiguration()
         pnconfig.subscribe_key = pubnub_config.SUBSCRIBE_KEY
@@ -203,22 +207,22 @@ class SingleLeaderTeleop:
         # Subscribe to status channel for follower feedback
         self.pubnub.subscribe().channels([pubnub_config.STATUS_CHANNEL]).execute()
         
-        logger.info(f"{Fore.GREEN}✓ PubNub connected as {pnconfig.user_id}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}✓ PubNub connected as {pnconfig.user_id}{Style.RESET_ALL}")
         
     def connect_leader(self):
         """Connect to the single leader robot."""
         # Use hardcoded port instead of auto-detection
         leader_port = self.LEADER_PORT
-        logger.info(f"Using hardcoded leader port: {leader_port}")
+        print(f"Using hardcoded leader port: {leader_port}")
         
         # SIMPLIFIED: Single leader object instead of list
         self.leader = SO101Controller(leader_port, self.motor_ids, self.baudrate, "Leader")
         self.leader.connect()
             
-        logger.info(f"{Fore.GREEN}✓ Connected to leader robot at {leader_port}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}✓ Connected to leader robot at {leader_port}{Style.RESET_ALL}")
         
     def publish_positions(self, positions: Dict[int, int]):
-        """Publish position data to PubNub."""
+        """Publish position data via ZMQ."""
         self.sequence += 1
         
         # SIMPLIFIED: No mapping needed for single arm - directly use positions
@@ -233,9 +237,9 @@ class SingleLeaderTeleop:
         }
         
         try:
-            # Publish to telemetry channel (async to prevent blocking)
-            self.pubnub.publish().channel(pubnub_config.TELEMETRY_CHANNEL).message(message).pn_async(lambda result, status: None)
-            self.monitor.message_sent(self.sequence)
+            # SETUP STREAMING WITHOUT PUBNUB:
+            self.zmq_socket.send_string(json.dumps(message))
+            # self.monitor.message_sent(self.sequence)
             
             # Track publish rate
             now = time.time()
@@ -245,8 +249,8 @@ class SingleLeaderTeleop:
                     self.publish_times.pop(0)
             self.last_publish_time = now
             
-        except PubNubException as e:
-            logger.error(f"Failed to publish: {e}")
+        except Exception as e:
+            print(f"Failed to publish: {e}")
             
     def display_status(self):
         """Display current status and statistics - compact version."""
@@ -270,9 +274,9 @@ class SingleLeaderTeleop:
             rate_info = "Rate: --"
         
         # Follower count
-        active_followers = sum(1 for fid, status in self.status_listener.follower_status.items() 
-                              if time.time() - status.get("timestamp", 0) < 5)
-        follower_info = f"Followers: {active_followers}"
+        # active_followers = sum(1 for fid, status in self.status_listener.follower_status.items() 
+        #                       if time.time() - status.get("timestamp", 0) < 5)
+        follower_info = f"Followers: 0"
         
         # Single compact line
         status_line = f"LEADER {leader_status} | {net_info} | {rate_info} | {follower_info} | Sent: {stats['sent']}"
@@ -281,14 +285,14 @@ class SingleLeaderTeleop:
     def teleoperation_loop(self):
         """Main loop reading positions and publishing."""
         self.running = True
-        target_interval = 1.0 / pubnub_config.TARGET_FPS
+        target_interval = 1.0 / 20  # Default 20 FPS
         
         # Start display thread
         display_thread = threading.Thread(target=self.display_loop, daemon=True)
         display_thread.start()
         
-        logger.info(f"Starting single arm teleoperation at {pubnub_config.TARGET_FPS} Hz...")
-        logger.info("Status updates every 2 seconds on single line. Press Ctrl+C to stop.")
+        # print(f"Starting single arm teleoperation at {pubnub_config.TARGET_FPS} Hz...")
+        print("Status updates every 2 seconds on single line. Press Ctrl+C to stop.")
         
         try:
             while self.running and not shutdown_requested:
@@ -307,7 +311,7 @@ class SingleLeaderTeleop:
                     
         except KeyboardInterrupt:
             print()  # New line after status display
-            logger.info("Stopping teleoperation...")
+            print("Stopping teleoperation...")
         finally:
             self.running = False
             
@@ -337,14 +341,14 @@ class SingleLeaderTeleop:
             self.pubnub.unsubscribe_all()
             
         # Disconnect robot
-        logger.info("Disconnecting robot...")
+        print("Disconnecting robot...")
         if self.leader:
             try:
                 self.leader.disconnect()
             except Exception as e:
-                logger.warning(f"Failed to disconnect leader: {e}")
+                print(f"Failed to disconnect leader: {e}")
                 
-        logger.info("Shutdown complete")
+        print("Shutdown complete")
 
 
 def main():
@@ -365,22 +369,27 @@ def main():
     motor_ids = [int(id.strip()) for id in args.motor_ids.split(",")]
     
     # Override config FPS if specified
-    if args.fps:
-        pubnub_config.TARGET_FPS = args.fps
+    target_fps = args.fps if args.fps else 20
     
     # Create and run teleoperation
     teleop = SingleLeaderTeleop(motor_ids, args.baudrate)
     
     try:
+        # SETTING UP NON_PUBNUB STREAMING:
+        context = zmq.Context()
+        teleop.zmq_socket = context.socket(zmq.PUSH)
+        teleop.zmq_socket.connect("tcp://10.1.10.85:5000")
+        print("Successfully connected to zmq")
+        
         # Setup
-        teleop.setup_pubnub()
+        # teleop.setup_pubnub()
         teleop.connect_leader()
         
         # Run main loop
         teleop.teleoperation_loop()
         
     except Exception as e:
-        logger.error(f"Error: {e}")
+        print(f"Error: {e}")
         return 1
     finally:
         teleop.shutdown()

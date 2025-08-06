@@ -13,6 +13,8 @@ Usage:
 
 import os
 import logging
+import zmq 
+import json
 
 # Disable PubNub logging via environment variable
 os.environ['PUBNUB_LOG_LEVEL'] = 'NONE'
@@ -33,7 +35,7 @@ for name in logging.root.manager.loggerDict:
         logging.getLogger(name).setLevel(logging.ERROR)
 
 import argparse
-import json
+# import json  # Already imported above
 import platform
 import signal
 import subprocess
@@ -43,15 +45,15 @@ import threading
 from typing import Dict, List, Optional
 import numpy as np
 
-try:
-    from pubnub.pnconfiguration import PNConfiguration
-    from pubnub.pubnub import PubNub
-    from pubnub.exceptions import PubNubException
-    from pubnub.callbacks import SubscribeCallback
-    from pubnub.enums import PNStatusCategory
-except ImportError:
-    print("PubNub not installed. Please install with: pip install pubnub")
-    sys.exit(1)
+# try:
+#     from pubnub.pnconfiguration import PNConfiguration
+#     from pubnub.pubnub import PubNub
+#     from pubnub.exceptions import PubNubException
+#     from pubnub.callbacks import SubscribeCallback
+#     from pubnub.enums import PNStatusCategory
+# except ImportError:
+#     print("PubNub not installed. Please install with: pip install pubnub")
+#     sys.exit(1)
 
 try:
     from colorama import init, Fore, Style
@@ -64,7 +66,7 @@ except ImportError:
         RESET_ALL = BRIGHT = ""
 
 # Import our modules
-import pubnub_config
+# import pubnub_config
 from arx_control import ARXArm  # Use ARX arm instead of SO101Controller
 
 # Global flag for graceful shutdown
@@ -363,48 +365,48 @@ class ARXArmWrapper:
         return gripper_cmd
 
 
-class TelemetryListener(SubscribeCallback):
-    """Listen for telemetry data from leaders."""
+# class TelemetryListener(SubscribeCallback):
+#     """Listen for telemetry data from leaders."""
     
-    def __init__(self):
-        self.latest_data = None
-        self.last_sequence = 0
-        self.received_count = 0
-        self.dropped_count = 0
-        self.last_receive_time = 0
+#     def __init__(self):
+#         self.latest_data = None
+#         self.last_sequence = 0
+#         self.received_count = 0
+#         self.dropped_count = 0
+#         self.last_receive_time = 0
         
-    def status(self, pubnub, status):
-        """Handle connection status changes."""
-        if status.category == PNStatusCategory.PNConnectedCategory:
-            logger.info(f"{Fore.GREEN}✓ Connected to PubNub channels{Style.RESET_ALL}")
-        elif status.category == PNStatusCategory.PNReconnectedCategory:
-            logger.info(f"{Fore.YELLOW}Reconnected to PubNub{Style.RESET_ALL}")
-        elif status.category == PNStatusCategory.PNDisconnectedCategory:
-            logger.warning(f"{Fore.RED}Disconnected from PubNub{Style.RESET_ALL}")
+#     def status(self, pubnub, status):
+#         """Handle connection status changes."""
+#         if status.category == PNStatusCategory.PNConnectedCategory:
+#             logger.info(f"{Fore.GREEN}✓ Connected to PubNub channels{Style.RESET_ALL}")
+#         elif status.category == PNStatusCategory.PNReconnectedCategory:
+#             logger.info(f"{Fore.YELLOW}Reconnected to PubNub{Style.RESET_ALL}")
+#         elif status.category == PNStatusCategory.PNDisconnectedCategory:
+#             logger.warning(f"{Fore.RED}Disconnected from PubNub{Style.RESET_ALL}")
             
-    def message(self, pubnub, message):
-        """Handle incoming telemetry messages."""
-        try:
-            # Get the message data
-            data = message.message
+#     def message(self, pubnub, message):
+#         """Handle incoming telemetry messages."""
+#         try:
+#             # Get the message data
+#             data = message.message
                 
-            if isinstance(data, dict) and data.get("type") == "telemetry":
-                sequence = data.get("sequence", 0)
+#             if isinstance(data, dict) and data.get("type") == "telemetry":
+#                 sequence = data.get("sequence", 0)
                 
-                # Only count as dropped if we actually missed messages (not just overwrites)
-                if self.last_sequence > 0 and sequence > self.last_sequence + 1:
-                    missed = sequence - self.last_sequence - 1
-                    # Only count as dropped if we have pending data that would be overwritten
-                    if self.latest_data is not None:
-                        self.dropped_count += missed
+#                 # Only count as dropped if we actually missed messages (not just overwrites)
+#                 if self.last_sequence > 0 and sequence > self.last_sequence + 1:
+#                     missed = sequence - self.last_sequence - 1
+#                     # Only count as dropped if we have pending data that would be overwritten
+#                     if self.latest_data is not None:
+#                         self.dropped_count += missed
                 
-                self.latest_data = data
-                self.last_receive_time = time.time()
-                self.received_count += 1
-                self.last_sequence = sequence
+#                 self.latest_data = data
+#                 self.last_receive_time = time.time()
+#                 self.received_count += 1
+#                 self.last_sequence = sequence
                 
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
+#         except Exception as e:
+#             logger.error(f"Error processing message: {e}")
 
 
 class SingleFollowerTeleop:
@@ -418,38 +420,41 @@ class SingleFollowerTeleop:
         self.running = False
         
         # Network components
-        self.pubnub: Optional[PubNub] = None
-        self.telemetry_listener = TelemetryListener()
+        # self.pubnub: Optional[PubNub] = None
+        # self.telemetry_listener = TelemetryListener()
         
         # Position smoothing
-        self.smoother = ARXPositionSmoother(pubnub_config.POSITION_SMOOTHING)
+        # self.smoother = ARXPositionSmoother(pubnub_config.POSITION_SMOOTHING)
         
         # Update tracking
         self.last_update_time = 0
         self.update_times = []
         self.latencies = []
+        self.s = zmq.Context().socket(zmq.PULL)
+        self.s.bind("tcp://0.0.0.0:5000")
+        print("Follower set up to ZMQ")
         
-    def setup_pubnub(self):
-        """Initialize PubNub connection."""
-        logger.info("Setting up PubNub connection...")
-        
-        pnconfig = PNConfiguration()
-        pnconfig.subscribe_key = pubnub_config.SUBSCRIBE_KEY
-        pnconfig.publish_key = pubnub_config.PUBLISH_KEY
-        pnconfig.user_id = f"follower-{platform.node()}"
-        pnconfig.ssl = True
-        pnconfig.enable_subscribe = True
-        # Disable PubNub's internal logging
-        pnconfig.log_verbosity = False
-        pnconfig.enable_logging = False
-        
-        self.pubnub = PubNub(pnconfig)
-        self.pubnub.add_listener(self.telemetry_listener)
-        
-        # Subscribe to telemetry channel
-        self.pubnub.subscribe().channels([pubnub_config.TELEMETRY_CHANNEL]).execute()
-        
-        logger.info(f"{Fore.GREEN}✓ PubNub connected as {pnconfig.user_id}{Style.RESET_ALL}")
+    # def setup_pubnub(self):
+    #     """Initialize PubNub connection."""
+    #     logger.info("Setting up PubNub connection...")
+    #     
+    #     pnconfig = PNConfiguration()
+    #     pnconfig.subscribe_key = pubnub_config.SUBSCRIBE_KEY
+    #     pnconfig.publish_key = pubnub_config.PUBLISH_KEY
+    #     pnconfig.user_id = f"follower-{platform.node()}"
+    #     pnconfig.ssl = True
+    #     pnconfig.enable_subscribe = True
+    #     # Disable PubNub's internal logging
+    #     pnconfig.log_verbosity = False
+    #     pnconfig.enable_logging = False
+    #     
+    #     self.pubnub = PubNub(pnconfig)
+    #     # self.pubnub.add_listener(self.telemetry_listener)
+    #     
+    #     # Subscribe to telemetry channel
+    #     self.pubnub.subscribe().channels([pubnub_config.TELEMETRY_CHANNEL]).execute()
+    #     
+    #     logger.info(f"{Fore.GREEN}✓ PubNub connected as {pnconfig.user_id}{Style.RESET_ALL}")
         
     def connect_follower(self):
         """Connect to the ARX follower robot."""
@@ -459,32 +464,32 @@ class SingleFollowerTeleop:
         
         logger.info(f"{Fore.GREEN}✓ Connected to ARX follower robot{Style.RESET_ALL}")
         
-    def send_acknowledgment(self, sequence: int, timestamp: float):
-        """Send acknowledgment back to leader."""
-        try:
-            ack_msg = {
-                "type": "ack",
-                "sequence": sequence,
-                "timestamp": timestamp,
-                "follower_id": f"follower-{platform.node()}"
-            }
-            self.pubnub.publish().channel(pubnub_config.STATUS_CHANNEL).message(ack_msg).pn_async(lambda result, status: None)
-        except:
-            pass  # Don't fail on ack errors
+    # def send_acknowledgment(self, sequence: int, timestamp: float):
+    #     """Send acknowledgment back to leader."""
+    #     try:
+    #         ack_msg = {
+    #             "type": "ack",
+    #             "sequence": sequence,
+    #             "timestamp": timestamp,
+    #             "follower_id": f"follower-{platform.node()}"
+    #         }
+    #         self.pubnub.publish().channel(pubnub_config.STATUS_CHANNEL).message(ack_msg).pn_async(lambda result, status: None)
+    #     except:
+    #         pass  # Don't fail on ack errors
             
-    def send_status(self):
-        """Send periodic status updates."""
-        try:
-            status_msg = {
-                "type": "status",
-                "timestamp": time.time(),
-                "follower_id": f"follower-{platform.node()}",
-                "motors_active": 7,  # 6 arm joints + 1 gripper for ARX R5
-                "followers_connected": 1  # Single follower
-            }
-            self.pubnub.publish().channel(pubnub_config.STATUS_CHANNEL).message(status_msg).sync()
-        except:
-            pass
+    # def send_status(self):
+    #     """Send periodic status updates."""
+    #     try:
+    #         status_msg = {
+    #             "type": "status",
+    #             "timestamp": time.time(),
+    #             "follower_id": f"follower-{platform.node()}",
+    #             "motors_active": 7,  # 6 arm joints + 1 gripper for ARX R5
+    #             "followers_connected": 1  # Single follower
+    #         }
+    #         self.pubnub.publish().channel(pubnub_config.STATUS_CHANNEL).message(status_msg).sync()
+    #     except:
+    #         pass
             
     def apply_positions(self, telemetry_data: Dict):
         """Apply received positions to ARX follower robot."""
@@ -507,8 +512,8 @@ class SingleFollowerTeleop:
         #     return
             
         # Send acknowledgment (only every 5th message to reduce traffic)
-        if sequence % 5 == 0:
-            self.send_acknowledgment(sequence, timestamp)
+        # if sequence % 5 == 0:
+        #     self.send_acknowledgment(sequence, timestamp)
         
         # SIMPLIFIED: Direct position application for single arm
         if not self.follower or not self.follower.connected:
@@ -525,7 +530,7 @@ class SingleFollowerTeleop:
             logger.debug(f"Writing positions to ARX arm: {motor_positions}")
             
             # Apply positions to ARX arm with smoothing
-            self.follower.write_joint_tics_smoothed(motor_positions, self.smoother)
+            self.follower.write_joint_tics(motor_positions)
             
         except Exception as e:
             logger.error(f"Error applying positions: {e}")
@@ -544,23 +549,23 @@ class SingleFollowerTeleop:
             print(f"  Motors: 6 arm joints + 1 gripper")  # ARX R5 architecture
         print()
         
-        # Network stats
-        stats = {
-            'received': self.telemetry_listener.received_count,
-            'dropped': self.telemetry_listener.dropped_count,
-            'latency': self.latencies
-        }
-        print(f"{Style.BRIGHT}Network Statistics:{Style.RESET_ALL}")
-        if stats['latency']:
-            avg_latency = sum(stats['latency']) / len(stats['latency'])
-            max_latency = max(stats['latency'])
-            print(f"  Average Latency: {avg_latency:.1f}ms")
-            print(f"  Max Latency:     {max_latency:.1f}ms")
-        else:
-            print(f"  Latency: No data yet")
+        # # Network stats
+        # stats = {
+        #     'received': self.telemetry_listener.received_count,
+        #     'dropped': self.telemetry_listener.dropped_count,
+        #     'latency': self.latencies
+        # }
+        # print(f"{Style.BRIGHT}Network Statistics:{Style.RESET_ALL}")
+        # if stats['latency']:
+        #     avg_latency = sum(stats['latency']) / len(stats['latency'])
+        #     max_latency = max(stats['latency'])
+        #     print(f"  Average Latency: {avg_latency:.1f}ms")
+        #     print(f"  Max Latency:     {max_latency:.1f}ms")
+        # else:
+        #     print(f"  Latency: No data yet")
             
-        print(f"  Received:        {stats['received']}")
-        print(f"  Dropped:         {stats['dropped']}")
+        # print(f"  Received:        {stats['received']}")
+        # print(f"  Dropped:         {stats['dropped']}")
         
         # Update rate
         if self.update_times:
@@ -568,16 +573,16 @@ class SingleFollowerTeleop:
             actual_fps = 1.0 / avg_interval if avg_interval > 0 else 0
             print(f"  Update Rate:     {actual_fps:.1f} Hz")
             
-        # Connection status
-        if self.telemetry_listener.last_receive_time > 0:
-            age = time.time() - self.telemetry_listener.last_receive_time
-            if age < 1:
-                status = f"{Fore.GREEN}Connected{Style.RESET_ALL}"
-            elif age < 5:
-                status = f"{Fore.YELLOW}Slow{Style.RESET_ALL}"
-            else:
-                status = f"{Fore.RED}Disconnected{Style.RESET_ALL}"
-            print(f"  Status:          {status} (last data {age:.1f}s ago)")
+        # # Connection status
+        # if self.telemetry_listener.last_receive_time > 0:
+        #     age = time.time() - self.telemetry_listener.last_receive_time
+        #     if age < 1:
+        #         status = f"{Fore.GREEN}Connected{Style.RESET_ALL}"
+        #     elif age < 5:
+        #         status = f"{Fore.YELLOW}Slow{Style.RESET_ALL}"
+        #     else:
+        #         status = f"{Fore.RED}Disconnected{Style.RESET_ALL}"
+        #     print(f"  Status:          {status} (last data {age:.1f}s ago)")
             
         print()
         print(f"{Fore.CYAN}Press Ctrl+C to stop{Style.RESET_ALL}")
@@ -598,10 +603,11 @@ class SingleFollowerTeleop:
         
         try:
             while self.running and not shutdown_requested:
-                # Check for new telemetry data
-                if self.telemetry_listener.latest_data:
+                # Check for new telemetry data (blocking receive)
+                try:
+                    message = self.s.recv_string(flags=zmq.NOBLOCK)  # Non-blocking receive
                     # Process the latest data
-                    self.apply_positions(self.telemetry_listener.latest_data)
+                    self.apply_positions(json.loads(message))
                     
                     # Track update rate
                     now = time.time()
@@ -612,7 +618,12 @@ class SingleFollowerTeleop:
                     self.last_update_time = now
                     
                     # Clear to prevent reprocessing
-                    self.telemetry_listener.latest_data = None
+                    # self.telemetry_listener.latest_data = None
+                except zmq.Again:
+                    # No message available, continue
+                    pass
+                except Exception as e:
+                    logger.error(f"Error receiving ZMQ message: {e}")
                     
                 # Small sleep to prevent CPU spinning
                 time.sleep(0.001)
@@ -631,7 +642,7 @@ class SingleFollowerTeleop:
     def status_loop(self):
         """Send periodic status updates."""
         while self.running and not shutdown_requested:
-            self.send_status()
+            # self.send_status()
             time.sleep(2)  # Send status every 2 seconds
             
     def shutdown(self):
@@ -639,8 +650,8 @@ class SingleFollowerTeleop:
         self.running = False
         
         # Unsubscribe from channels
-        if self.pubnub:
-            self.pubnub.unsubscribe_all()
+        # if self.pubnub:
+        #     self.pubnub.unsubscribe_all()
             
         # Return to home position and disconnect robot
         logger.info("Returning ARX arm to home position...")
@@ -664,6 +675,10 @@ class SingleFollowerTeleop:
 def main():
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
+
+    # SETUP ZMQ RECEIVING:
+    
+    
     
     parser = argparse.ArgumentParser(description="Single-arm ARX follower-side teleoperation via PubNub")
     parser.add_argument("--can_port", type=str, default="can0",
@@ -687,7 +702,7 @@ def main():
     
     try:
         # Setup
-        teleop.setup_pubnub()
+        # teleop.setup_pubnub()
         teleop.connect_follower()
         
         # Run main loop
